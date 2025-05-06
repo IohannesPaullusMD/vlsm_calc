@@ -4,18 +4,12 @@
 #include <math.h>
 #include <stdint.h>
 
-// Convert IPv4 dotted-decimal string to a 32-bit integer.
 uint32_t ipv4_to_int(const char *ip_str) {
     unsigned int a, b, c, d;
     sscanf(ip_str, "%u.%u.%u.%u", &a, &b, &c, &d);
-    uint32_t ip = ((a & 0xFF) << 24) |
-                  ((b & 0xFF) << 16) |
-                  ((c & 0xFF) << 8)  |
-                  (d & 0xFF);
-    return ip;
+    return (a << 24) | (b << 16) | (c << 8) | d;
 }
 
-// Convert a 32-bit IP integer into dotted-decimal format.
 void int_to_ipv4(uint32_t ip, char *buffer) {
     sprintf(buffer, "%u.%u.%u.%u",
             (ip >> 24) & 0xFF,
@@ -24,81 +18,82 @@ void int_to_ipv4(uint32_t ip, char *buffer) {
             ip & 0xFF);
 }
 
-// Generate a mask value (32-bit integer) based on the prefix length.
 uint32_t prefix_to_mask(int prefix) {
     if (prefix == 0)
         return 0;
-    return (uint32_t)(0xFFFFFFFF << (32 - prefix));
+    return (0xFFFFFFFF << (32 - prefix)) & 0xFFFFFFFF;
 }
 
-int main() {
+typedef struct {
+    int hosts_required;
+    int new_prefix;      
+    uint32_t block_size; 
+    uint32_t network_address; 
+    uint32_t subnet_mask;     
+} SubnetInfo;
+
+int compare_desc(const void *a, const void *b) {
+    SubnetInfo *sub1 = (SubnetInfo *)a;
+    SubnetInfo *sub2 = (SubnetInfo *)b;
+    return sub2->hosts_required - sub1->hosts_required;
+}
+
+int main(void) {
     char base_ip_str[16];
     int base_prefix;
     int num_subnets;
-
-    // Input base network address and prefix (e.g., 192.168.1.0 and 24)
+    
     printf("Enter base IPv4 address (e.g., 192.168.1.0): ");
     scanf("%15s", base_ip_str);
-
+    
     printf("Enter base network prefix length (e.g., 24): ");
     scanf("%d", &base_prefix);
-
-    // Input the number of subnets.
+    
     printf("Enter number of subnets: ");
     scanf("%d", &num_subnets);
-
-    // Allocate array to hold the number of hosts required for each subnet.
-    int *hosts = malloc(sizeof(int) * num_subnets);
-    if (!hosts) {
-        fprintf(stderr, "Memory allocation error\n");
+    
+    SubnetInfo *subnets = malloc(sizeof(SubnetInfo) * num_subnets);
+    if (!subnets) {
+        fprintf(stderr, "Memory allocation error!\n");
         return 1;
     }
-
+    
     for (int i = 0; i < num_subnets; i++) {
         printf("Enter number of hosts for subnet %d: ", i + 1);
-        scanf("%d", &hosts[i]);
+        scanf("%d", &subnets[i].hosts_required);
     }
-
-    // Determine the starting network address by applying the base mask.
+    
+    qsort(subnets, num_subnets, sizeof(SubnetInfo), compare_desc);
+    
     uint32_t base_ip = ipv4_to_int(base_ip_str);
     uint32_t base_mask = prefix_to_mask(base_prefix);
     uint32_t current_network = base_ip & base_mask;
-
-    // Print header for the output table.
-    printf("\nVLSM Calculation Table:\n");
-    printf("---------------------------------------------------------\n");
-    printf("| Subnet | Hosts Required | Network Address | Subnet Mask |\n");
-    printf("---------------------------------------------------------\n");
-
+    
     for (int i = 0; i < num_subnets; i++) {
-        int required = hosts[i];
-        /* 
-         * For each subnet, we need a block that can accommodate:
-         * required hosts + 2 (one for network and one for broadcast).
-         */
-        int total_needed = required + 2;
-        // Find the minimum number of host bits necessary.
+        int total_needed = subnets[i].hosts_required + 2;
         int host_bits = (int)ceil(log2(total_needed));
-        // Block size in terms of number of addresses.
-        int block_size = 1 << host_bits;
-        // The new subnet mask has (32 - host_bits) bits for the network.
-        int subnet_prefix = 32 - host_bits;
-
-        uint32_t subnet_mask = prefix_to_mask(subnet_prefix);
-
-        char network_str[16];
-        char mask_str[16];
-        int_to_ipv4(current_network, network_str);
-        int_to_ipv4(subnet_mask, mask_str);
-
-        // Display the calculated subnet
-        printf("| %-6d | %-14d | %-15s | %-11s |\n", i + 1, required, network_str, mask_str);
-
-        // Move to the next available network block.
-        current_network += block_size;
+        subnets[i].block_size = 1 << host_bits;      
+        subnets[i].new_prefix = 32 - host_bits;      
+        subnets[i].subnet_mask = prefix_to_mask(subnets[i].new_prefix);
+        subnets[i].network_address = current_network;  
+        
+        current_network += subnets[i].block_size;
     }
-    printf("---------------------------------------------------------\n");
-
-    free(hosts);
+    
+    printf("----------------------------------------------------------------\n");
+    printf("| Hosts Required |   Network Address   |      Subnet Mask      |\n");
+    printf("----------------------------------------------------------------\n");
+    char network_str[16], mask_str[16];
+    for (int i = 0; i < num_subnets; i++) {
+        int_to_ipv4(subnets[i].network_address, network_str);
+        int_to_ipv4(subnets[i].subnet_mask, mask_str);
+        printf("| %-14d | %-19s | %-21s |\n",
+               subnets[i].hosts_required,
+               network_str,
+               mask_str);
+    }
+    printf("-----------------------------------------------------------------------------\n");
+    
+    free(subnets);
     return 0;
 }
